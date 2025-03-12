@@ -113,8 +113,8 @@ class ControlSystem:
 
     def get_current_azimuth(self):
         """获取当前方位角"""
-        return self.pelco.query_angle(0x51) // 100  # 根据实际协议调整
+        return self.pelco.query_angle(0x51) // 100 
 
     def get_current_elevation(self):
         """获取当前俯仰角"""
-        return self.pelco.query_angle(0x53) // 100  # 根据实际协议调整
+        return self.pelco.query_angle(0x53) // 100 
