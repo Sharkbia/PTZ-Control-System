@@ -3,7 +3,7 @@
 # MIT License - See LICENSE for details
 from threading import Thread, Lock
 from core.protocols import PelcoDProtocol, GS232BProtocol
-from hardware.interfaces import SerialHandler, TCPHandler, UDPHandler
+from hardware.interfaces import SerialHandler, TCPHandler
 
 
 class ControlSystem:
@@ -11,7 +11,7 @@ class ControlSystem:
         self.config = config
         self.log = log_callback
         self.running = False
-        self._connection_lock = Lock()  # 连接操作锁
+        self._connection_lock = Lock()
         self.gs232b = None
         self.pelco = None
 
@@ -23,33 +23,33 @@ class ControlSystem:
             raise
 
     def _init_connections(self):
-        """单次初始化所有硬件连接"""
         with self._connection_lock:
-            # 初始化GS-232B接口
-            if not self.gs232b or not self.gs232b._is_connected:
-                self.gs232b = self._create_handler("gs232b")
-                self.log("[连接] GS-232B连接已建立")
+            # 关闭旧连接
+            if self.gs232b:
+                self.gs232b.close()
+            if self.pelco and self.pelco.hw:
+                self.pelco.hw.close()
 
-            # 初始化Pelco-D接口
-            if not self.pelco or not self.pelco.hw._is_connected:
-                pelco_hw = self._create_handler("pelco")
-                self.pelco = PelcoDProtocol(pelco_hw)
-                self.log("[连接] Pelco-D连接已建立")
+            # 初始化 GS-232B
+            self.gs232b = self._create_handler("gs232b")
+            self.log("[连接] GS-232B连接已建立")
+
+            # 初始化 Pelco-D
+            pelco_hw = self._create_handler("pelco")
+            self.pelco = PelcoDProtocol(pelco_hw, self.config["pelco"])  # 添加第二个参数
+            self.log("[连接] Pelco-D连接已建立")
 
     def _create_handler(self, device):
-        """创建硬件处理器"""
         config = self.config[device]
         protocol = config["protocol"]
-
         handlers = {
             "serial": SerialHandler,
-            "tcp": TCPHandler,
-            "udp": UDPHandler
+            "tcp": TCPHandler
         }
 
-        handler = handlers[protocol](config)
+        handler = handlers[protocol](config, self.log)  # 传递 self.log
         if not handler.connect():
-            raise ConnectionError(f"{device}连接失败")
+            raise ConnectionError(f"{device} 连接失败")
         return handler
 
     def start(self):
@@ -70,18 +70,19 @@ class ControlSystem:
                     self.log(f"[命令] 收到命令: {cmd}")
                     response = self._process_command(cmd)
                     if response:
+                        self.log(f"[系统] 返回：{response}")
                         self.gs232b.send(response.encode())
             except Exception as e:
                 self.log(f"[错误] 处理错误: {str(e)}")
 
     def _process_command(self, cmd: str) -> str:
         if cmd == "C2":
-            self.log("[命令] 处理C2查询")
-            azimuth = self.pelco.query_angle(0x51)
-            elevation = self.pelco.query_angle(0x53)
+            azimuth = self.pelco.query_angle(0x51)  # 方位角
+            elevation = self.pelco.query_angle(0x53)  # 俯仰角
 
             if azimuth is not None and elevation is not None:
-                return f"AZ={azimuth // 100:03d} EL={elevation // 100:03d}\r\n"
+                # 将浮点数转为整数后再格式化
+                return f"AZ={int(azimuth // 100):03d} EL={int(elevation // 100):03d}\r\n"
             return ""
 
         elif cmd.startswith("W"):
@@ -99,22 +100,23 @@ class ControlSystem:
         return ""
 
     def stop(self):
-        """安全关闭系统"""
         with self._connection_lock:
             self.running = False
             if self.gs232b:
                 self.gs232b.close()
+                self.gs232b = None
                 self.log("[连接] GS-232B连接已关闭")
             if self.pelco:
                 self.pelco.hw.close()
+                self.pelco = None
                 self.log("[连接] Pelco-D连接已关闭")
             if self.thread.is_alive():
-                self.thread.join()
+                self.thread.join(timeout=5)
 
     def get_current_azimuth(self):
         """获取当前方位角"""
-        return self.pelco.query_angle(0x51) // 100 
+        return self.pelco.query_angle(0x51) // 100
 
     def get_current_elevation(self):
         """获取当前俯仰角"""
-        return self.pelco.query_angle(0x53) // 100 
+        return self.pelco.query_angle(0x53) // 100

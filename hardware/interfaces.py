@@ -7,6 +7,11 @@ from abc import ABC, abstractmethod
 
 
 class HardwareInterface(ABC):
+    def __init__(self, config, log_callback):  # 新增 log_callback 参数
+        self.config = config
+        self.log = log_callback  # 保存日志回调函数
+        self._is_connected = False  # 可选：统一管理连接状态
+
     @abstractmethod
     def connect(self) -> bool: ...
 
@@ -21,7 +26,8 @@ class HardwareInterface(ABC):
 
 
 class SerialHandler(HardwareInterface):
-    def __init__(self, config):
+    def __init__(self, config, log_callback):  # 新增 log_callback
+        super().__init__(config, log_callback)  # 调用父类初始化
         self.config = config
         self.ser = None
         self._is_connected = False
@@ -42,12 +48,10 @@ class SerialHandler(HardwareInterface):
             raise ConnectionError(f"串口连接失败：{str(e)}")
 
     def send(self, data: bytes) -> bool:
-        if not self._is_connected:
-            raise ConnectionAbortedError("连接未建立")
         try:
             return self.ser.write(data) == len(data)
         except Exception as e:
-            print(f"串口发送错误：{str(e)}")
+            self.log(f"[错误] 串口发送失败: {str(e)}")  # 使用日志回调
             return False
 
     def recv(self, length: int, timeout: float = None) -> bytes:
@@ -60,7 +64,7 @@ class SerialHandler(HardwareInterface):
                 return data
             return self.ser.read(length)
         except Exception as e:
-            print(f"串口接收错误：{str(e)}")
+            self.log(f"[错误] 串口接收错误：{str(e)}")
             return b""
 
     def close(self):
@@ -70,98 +74,39 @@ class SerialHandler(HardwareInterface):
 
 
 class TCPHandler(HardwareInterface):
-    def __init__(self, config):
-        self.config = config
+    def __init__(self, config, log_callback):  # 必须包含 log_callback
+        super().__init__(config, log_callback)
         self.sock = None
-        self.conn = None
-        self.addr = None
         self._is_connected = False
 
     def connect(self) -> bool:
         if self._is_connected:
             return True
-
         try:
             self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            self.sock.bind((self.config["tcp"]["host"], self.config["tcp"]["port"]))
-            self.sock.listen(1)
+            self.sock.connect((self.config["tcp"]["host"], self.config["tcp"]["port"]))
             self._is_connected = True
             return True
         except socket.error as e:
             raise ConnectionError(f"TCP连接失败：{str(e)}")
 
+    # 删除原 listen/accept 相关逻辑，简化 send/recv
     def send(self, data: bytes) -> bool:
-        if not self._is_connected or not self.conn:
+        if not self._is_connected:
             return False
         try:
-            return self.conn.send(data) == len(data)
+            return self.sock.send(data) == len(data)
         except Exception as e:
-            print(f"TCP发送错误：{str(e)}")
-            return False
-
-    def recv(self, length: int, timeout: float = None) -> bytes:
-        try:
-            if not self.conn:
-                self.conn, self.addr = self.sock.accept()
-            if timeout:
-                self.conn.settimeout(timeout)
-            return self.conn.recv(length)
-        except socket.timeout:
-            return b""
-        except Exception as e:
-            print(f"TCP接收错误：{str(e)}")
-            return b""
-
-    def close(self):
-        if self.conn:
-            self.conn.close()
-        if self.sock:
-            self.sock.close()
-        self._is_connected = False
-
-
-class UDPHandler(HardwareInterface):
-    def __init__(self, config):
-        self.config = config
-        self.sock = None
-        self.addr = None
-        self._is_connected = False
-
-    def connect(self) -> bool:
-        if self._is_connected:
-            return True
-
-        try:
-            self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            self.sock.bind((self.config["udp"]["host"], self.config["udp"]["port"]))
-            self._is_connected = True
-            return True
-        except socket.error as e:
-            raise ConnectionError(f"UDP连接失败：{str(e)}")
-
-    def send(self, data: bytes) -> bool:
-        if not self._is_connected or not self.addr:
-            return False
-        try:
-            return self.sock.sendto(data, self.addr) == len(data)
-        except Exception as e:
-            print(f"UDP发送错误：{str(e)}")
+            self.log(f"[错误] TCP发送错误：{str(e)}")
             return False
 
     def recv(self, length: int, timeout: float = None) -> bytes:
         try:
             if timeout:
                 self.sock.settimeout(timeout)
-            data, self.addr = self.sock.recvfrom(length)
-            return data
+            return self.sock.recv(length)
         except socket.timeout:
             return b""
         except Exception as e:
-            print(f"UDP接收错误：{str(e)}")
+            self.log(f"[错误] TCP接收错误：{str(e)}")
             return b""
-
-    def close(self):
-        if self.sock:
-            self.sock.close()
-        self._is_connected = False
