@@ -43,19 +43,38 @@ class PelcoDProtocol:
         return None
 
     def set_angle(self, angle: float, set_cmd: int) -> bool:
-        # 验证角度范围
-        if set_cmd == 0x4B:  # 方位角
-            if not (0 <= angle <= 360):
-                return False
-        elif set_cmd == 0x4D:  # 俯仰角
-            if not (0 <= angle <= 90):
+        # 仅针对俯仰角做特殊处理
+        if set_cmd == 0x4D:  # 俯仰角
+            config = self.config["angle_correction"]
+            abs_min = abs(config["min_elevation"])
+
+            # 计算实际要设置的值
+            if angle < abs_min:
+                adjusted = 360 + config["min_elevation"]
+            else:
+                adjusted = angle - abs_min
+
+            # 验证是否在设备允许范围内
+            if not (config["min_elevation"] <= adjusted <= config["max_elevation"]):
                 return False
 
-        value = int(angle * 100)
-        data1 = (value >> 8) & 0xFF
-        data2 = value & 0xFF
-        packet = self.generate_packet(command2=set_cmd, data1=data1, data2=data2)
-        return self.hw.send(packet)
+            value = int(adjusted * 100)
+            data1 = (value >> 8) & 0xFF
+            data2 = value & 0xFF
+            packet = self.generate_packet(command2=set_cmd, data1=data1, data2=data2)
+            return self.hw.send(packet)
+
+        # 方位角
+        elif set_cmd == 0x4B:
+            if not (0 <= angle <= 360):
+                return False
+            value = int(angle * 100)
+            data1 = (value >> 8) & 0xFF
+            data2 = value & 0xFF
+            packet = self.generate_packet(command2=set_cmd, data1=data1, data2=data2)
+            return self.hw.send(packet)
+
+        return False
 
     def _validate_response(self, response: bytes) -> bool:
         """验证配置有效性"""
@@ -70,25 +89,22 @@ class PelcoDProtocol:
         return expected_checksum == actual_checksum
 
     def _apply_angle_correction(self, raw_value: int, cmd_type: int) -> int:
-        """应用角度修正"""
+        """统一处理角度修正逻辑"""
         corrected = raw_value / 100.0
         config = self.config["angle_correction"]
+        abs_min = abs(config["min_elevation"])
 
-        if cmd_type == 0x51:  # 方位角
+        # 处理俯仰角查询响应
+        if cmd_type == 0x53:
+            # 所有查询结果均加上最小角度绝对值
+            adjusted = corrected + abs_min
+            adjusted %= 360  # 确保在0-360范围内
+            return int(adjusted * 100)
+
+        # 处理方位角查询响应
+        elif cmd_type == 0x51:
             corrected += config["azimuth_offset"] + config["initial_azimuth"]
-            corrected %= 360  # 确保在0-360度范围内
-            return int(corrected * 100)
-
-        elif cmd_type == 0x53:  # 俯仰角
-            min_ele = config["min_elevation"]
-            max_ele = config["max_elevation"]
-
-            if corrected > max_ele:
-                # 当超过最大值时：计算值 = 原始值 + 最小角度绝对值
-                adjusted = corrected + abs(min_ele)
-                adjusted %= 360  # 超过360度取余
-                return int(adjusted * 100)
-
+            corrected %= 360
             return int(corrected * 100)
 
         return raw_value
