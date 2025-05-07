@@ -24,20 +24,24 @@ class ControlSystem:
 
     def _init_connections(self):
         with self._connection_lock:
-            # 关闭旧连接
-            if self.gs232b:
-                self.gs232b.close()
-            if self.pelco and self.pelco.hw:
-                self.pelco.hw.close()
+            try:
+                # 关闭旧连接
+                if self.gs232b:
+                    self.gs232b.close()
+                if self.pelco and self.pelco.hw:
+                    self.pelco.hw.close()
 
-            # 初始化 GS-232B
-            self.gs232b = self._create_handler("gs232b")
-            self.log("[连接] GS-232B连接已建立")
+                # 初始化 GS-232B
+                self.gs232b = self._create_handler("gs232b")
+                self.log("[连接] GS-232B连接已建立")
 
-            # 初始化 Pelco-D
-            pelco_hw = self._create_handler("pelco")
-            self.pelco = PelcoDProtocol(pelco_hw, self.config["pelco"])  # 添加第二个参数
-            self.log("[连接] Pelco-D连接已建立")
+                # 初始化 Pelco-D
+                pelco_hw = self._create_handler("pelco")
+                self.pelco = PelcoDProtocol(pelco_hw, self.config["pelco"])
+                self.log("[连接] Pelco-D连接已建立")
+            except Exception as e:
+                self.log(f"[错误] 连接初始化失败: {str(e)}")
+                raise
 
     def _create_handler(self, device):
         config = self.config[device]
@@ -47,7 +51,7 @@ class ControlSystem:
             "tcp": TCPHandler
         }
 
-        handler = handlers[protocol](config, self.log)  # 传递 self.log
+        handler = handlers[protocol](config, self.log)
         if not handler.connect():
             raise ConnectionError(f"{device} 连接失败")
         return handler
@@ -76,27 +80,76 @@ class ControlSystem:
                 self.log(f"[错误] 处理错误: {str(e)}")
 
     def _process_command(self, cmd: str) -> str:
-        if cmd == "C2":
-            azimuth = self.pelco.query_angle(0x51)  # 方位角
-            elevation = self.pelco.query_angle(0x53)  # 俯仰角
+        command_handlers = {
+            'C2': self._handle_c2,
+            'W': self._handle_w,
+            r'\set_pos': self._handle_setpos
+        }
 
-            if azimuth is not None and elevation is not None:
-                # 将浮点数转为整数后再格式化
-                return f"AZ={int(azimuth // 100):03d} EL={int(elevation // 100):03d}\r\n"
+        # 处理组合命令
+        if cmd.startswith("C2W") or (cmd.startswith("W") and cmd.endswith("C2")):
+            return self._handle_combined_command(cmd)
+
+        # 遍历处理标准命令
+        for prefix, handler in command_handlers.items():
+            if cmd.startswith(prefix):
+                return handler(cmd[len(prefix):].strip())
+
+        return ""
+
+    def _handle_combined_command(self, cmd: str) -> str:
+        self.log("[命令] 接收到 C2 和 W 命令")
+        w_cmd = cmd[3:] if cmd.startswith("C2W") else cmd[1:-2]
+        w_result = self._execute_angle_control_command(w_cmd)
+        return self._execute_angle_query_command() if w_result else ""
+
+    def _handle_c2(self, _) -> str:
+        return self._execute_angle_query_command()
+
+    def _handle_w(self, cmd: str) -> str:
+        return self._execute_angle_control_command(cmd)
+
+    def _handle_setpos(self, cmd: str) -> str:
+        parts = cmd.split()
+        if len(parts) != 2:
             return ""
 
-        elif cmd.startswith("W"):
-            try:
-                parts = cmd[1:].split()
-                azi = float(parts[0])
-                ele = float(parts[1])
-                success = (
-                        self.pelco.set_angle(azi, 0x4B) and
-                        self.pelco.set_angle(ele, 0x4D)
-                )
-                return "ACK\r\n" if success else ""
-            except:
+        try:
+            azi, ele = map(float, parts)
+            if ele < 0:
                 return ""
+            self.log(f"[命令] 收到 look4sat 角度指令: 方位 {azi} 俯仰 {ele}")
+            return self._execute_angle_control_command(f"{round(azi)} {round(ele)}")
+        except ValueError:
+            return ""
+
+    def _execute_angle_control_command(self, w_cmd: str) -> str:
+        """执行 W 命令。"""
+        try:
+            parts = w_cmd.split()
+            azi = float(parts[0])
+            ele = float(parts[1])
+            success = (
+                    self.pelco.set_a    ngle(azi, 0x4B) and
+                    self.pelco.set_angle(ele, 0x4D)
+            )
+            return "ACK\r\n" if success else ""
+        except (IndexError, ValueError):
+            self.log("[命令] W 命令参数解析失败")
+            return ""
+
+    def _execute_angle_query_command(self) -> str:
+        """执行 C2 命令。"""
+        self.log("[命令] 处理 C2 查询")
+        azimuth = self.pelco.query_angle(0x51)
+        elevation = self.pelco.query_angle(0x53)
+
+        if azimuth is not None and elevation is not None:
+            azimuth_deg = azimuth // 100
+            elevation_deg = elevation // 100
+            log_msg = f"水平角度 {azimuth_deg} 俯仰角度 {elevation_deg}"
+            self.log(log_msg)
+            return f"AZ={azimuth_deg:03d} EL={elevation_deg:03d}\r\n"
         return ""
 
     def stop(self):
@@ -112,11 +165,3 @@ class ControlSystem:
                 self.log("[连接] Pelco-D连接已关闭")
             if self.thread.is_alive():
                 self.thread.join(timeout=5)
-
-    def get_current_azimuth(self):
-        """获取当前方位角"""
-        return self.pelco.query_angle(0x51) // 100
-
-    def get_current_elevation(self):
-        """获取当前俯仰角"""
-        return self.pelco.query_angle(0x53) // 100

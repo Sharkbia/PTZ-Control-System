@@ -139,7 +139,7 @@ class MainWindow:
         serial_port.bind("<Button-1>", lambda e: self._refresh_ports(serial_port))
         serial_port.grid(row=0, column=1)
         ttkb.Label(serial_frame, text="波特率:").grid(row=1, column=0)
-        baudrate = ttkb.Combobox(serial_frame, values=["2400", "9600", "19200", "38400", "115200"], state="readonly")
+        baudrate = ttkb.Combobox(serial_frame, values=["2400", "9600", "19200", "38400", "115200"])
         baudrate.grid(row=1, column=1)
         notebook.add(serial_frame, text="串口参数")
         setattr(self, f"{device}_serial", (serial_port, baudrate))
@@ -203,8 +203,6 @@ class MainWindow:
         """保存配置并热更新"""
         try:
             self._save_config()
-            if self.running:
-                self._reinitialize_system()
         except Exception as e:
             self.log(f"[错误] 配置更新失败: {str(e)}")
 
@@ -227,15 +225,27 @@ class MainWindow:
 
         if proto == "串口":
             port, baud = getattr(self, f"{device}_serial")
+            port_value = port.get().strip()
+            baud_value = baud.get().strip()
+            if not port_value or not baud_value:
+                raise ValueError(f"{device} 串口参数不能为空")
             config["serial"] = {
-                "port": port.get(),
-                "baudrate": int(baud.get())
+                "port": port_value,
+                "baudrate": int(baud_value)
             }
         else:
             host, port = getattr(self, f"{device}_tcp")
+            host_value = host.get().strip()
+            port_value = port.get().strip()
+            if not host_value or not port_value:
+                raise ValueError(f"{device} TCP参数不能为空")
+            try:
+                port_num = int(port_value)
+            except ValueError:
+                raise ValueError(f"{device} 端口号必须是整数")
             config["tcp"] = {
-                "host": host.get().strip(),
-                "port": int(port.get().strip())
+                "host": host_value,
+                "port": port_num
             }
 
         if device == "pelco":
@@ -252,11 +262,11 @@ class MainWindow:
         """验证配置有效性"""
         # 基础协议验证
         for device in ["gs232b", "pelco"]:
-            proto = config[device]["protocol"]
-            if proto == "serial" and not config[device]["serial"]["port"]:
-                raise ValueError(f"{device} 必须配置串口号")
-            if proto == "tcp" and (not config[device]["tcp"]["host"] or not config[device]["tcp"]["port"]):
-                raise ValueError(f"{device} 必须配置有效的IP和端口")
+            if config[device]["protocol"] == "tcp":
+                if not config[device]["tcp"].get("host"):
+                    raise ValueError(f"{device} 需要绑定IP地址")
+                if not 0 < config[device]["tcp"]["port"] <= 65535:
+                    raise ValueError(f"{device} 端口号必须为1-65535")
 
         # 角度参数验证
         pelco_corr = config["pelco"]["angle_correction"]
@@ -266,18 +276,6 @@ class MainWindow:
             raise ValueError("初始水平角必须在0-360度之间")
         if pelco_corr["min_elevation"] > pelco_corr["max_elevation"]:
             raise ValueError("最小俯仰角不能大于最大俯仰角")
-
-    def _reinitialize_system(self):
-        """热更新系统配置"""
-        with self._connection_lock:
-            try:
-                self.control_system.stop()
-                self.control_system = ControlSystem(self._load_config(), self.log)
-                self.control_system.start()
-                self.log("[系统] 配置已热更新")
-            except Exception as e:
-                self.log(f"[错误] 热更新失败: {str(e)}")
-                messagebox.showerror("错误", f"配置更新失败: {str(e)}")
 
     def _load_config_to_ui(self):
         """加载配置文件到界面"""

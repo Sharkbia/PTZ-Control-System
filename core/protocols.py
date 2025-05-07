@@ -43,38 +43,35 @@ class PelcoDProtocol:
         return None
 
     def set_angle(self, angle: float, set_cmd: int) -> bool:
-        # 仅针对俯仰角做特殊处理
-        if set_cmd == 0x4D:  # 俯仰角
-            config = self.config["angle_correction"]
-            abs_min = abs(config["min_elevation"])
+        angle_handlers = {
+            0x4D: self._handle_elevation,
+            0x4B: self._handle_azimuth
+        }
 
-            # 计算实际要设置的值
-            if angle < abs_min:
-                adjusted = 360 + config["min_elevation"]
-            else:
-                adjusted = angle - abs_min
+        handler = angle_handlers.get(set_cmd)
+        return handler(angle) if handler else False
 
-            # 验证是否在设备允许范围内
-            if not (config["min_elevation"] <= adjusted <= config["max_elevation"]):
-                return False
+    def _handle_elevation(self, angle: float) -> bool:
+        config = self.config["angle_correction"]
+        abs_min = abs(config["min_elevation"])
 
-            value = int(adjusted * 100)
-            data1 = (value >> 8) & 0xFF
-            data2 = value & 0xFF
-            packet = self.generate_packet(command2=set_cmd, data1=data1, data2=data2)
-            return self.hw.send(packet)
+        # 计算调整后的角度
+        adjusted = angle - abs_min if angle >= abs_min else 360 + config["min_elevation"] + angle
+        return self._send_angle_command(adjusted, 0x4D)
 
-        # 方位角
-        elif set_cmd == 0x4B:
-            if not (0 <= angle <= 360):
-                return False
-            value = int(angle * 100)
-            data1 = (value >> 8) & 0xFF
-            data2 = value & 0xFF
-            packet = self.generate_packet(command2=set_cmd, data1=data1, data2=data2)
-            return self.hw.send(packet)
+    def _handle_azimuth(self, angle: float) -> bool:
+        if angle <= 0:
+            return False
+        if angle > 360:
+            angle %= 360
+        return self._send_angle_command(angle, 0x4B)
 
-        return False
+    def _send_angle_command(self, angle: float, command: int) -> bool:
+        value = int(angle * 100)
+        data1 = (value >> 8) & 0xFF
+        data2 = value & 0xFF
+        packet = self.generate_packet(command2=command, data1=data1, data2=data2)
+        return self.hw.send(packet)
 
     def _validate_response(self, response: bytes) -> bool:
         """验证配置有效性"""

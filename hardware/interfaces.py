@@ -3,6 +3,7 @@
 # MIT License - See LICENSE for details
 import serial
 import socket
+import select
 from abc import ABC, abstractmethod
 
 
@@ -51,7 +52,7 @@ class SerialHandler(HardwareInterface):
         try:
             return self.ser.write(data) == len(data)
         except Exception as e:
-            self.log(f"[错误] 串口发送失败: {str(e)}")  # 使用日志回调
+            self.log(f"[错误] 串口发送失败: {str(e)}")
             return False
 
     def recv(self, length: int, timeout: float = None) -> bytes:
@@ -74,39 +75,75 @@ class SerialHandler(HardwareInterface):
 
 
 class TCPHandler(HardwareInterface):
-    def __init__(self, config, log_callback):  # 必须包含 log_callback
+    def __init__(self, config, log_callback):
         super().__init__(config, log_callback)
         self.sock = None
+        self.client_sock = None
         self._is_connected = False
 
     def connect(self) -> bool:
         if self._is_connected:
             return True
-        try:
-            self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.sock.connect((self.config["tcp"]["host"], self.config["tcp"]["port"]))
-            self._is_connected = True
-            return True
-        except socket.error as e:
-            raise ConnectionError(f"TCP连接失败：{str(e)}")
 
-    # 删除原 listen/accept 相关逻辑，简化 send/recv
+        try:
+            # 创建服务器套接字
+            self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            self.sock.bind((self.config["tcp"]["host"], self.config["tcp"]["port"]))
+            self.sock.listen(1)
+            self.log(f"[TCP] 正在 {self.config['tcp']['host']}:{self.config['tcp']['port']} 监听...")
+
+            while not self._is_connected:
+                # 使用 select 来检查是否有新的连接请求
+                readable, writable, exceptional = select.select([self.sock], [], [], 0.5)
+                if self.sock in readable:
+                    try:
+                        # 尝试接受客户端连接
+                        self.client_sock, addr = self.sock.accept()
+                        self.client_sock.setblocking(False)  # 设置为非阻塞模式
+                        self._is_connected = True
+                        self.log(f"[TCP] 已接受来自 {addr} 的连接")
+                    except BlockingIOError:
+                        # 当前没有客户端连接，继续等待
+                        pass
+
+            return True
+
+        except Exception as e:
+            raise ConnectionError(f"TCP服务器启动失败：{str(e)}")
+
     def send(self, data: bytes) -> bool:
-        if not self._is_connected:
+        if not self._is_connected or not self.client_sock:
             return False
         try:
-            return self.sock.send(data) == len(data)
+            return self.client_sock.send(data) == len(data)
         except Exception as e:
             self.log(f"[错误] TCP发送错误：{str(e)}")
             return False
 
     def recv(self, length: int, timeout: float = None) -> bytes:
+        if not self._is_connected or not self.client_sock:
+            return b""
         try:
             if timeout:
-                self.sock.settimeout(timeout)
-            return self.sock.recv(length)
+                self.client_sock.settimeout(timeout)
+            return self.client_sock.recv(length)
         except socket.timeout:
             return b""
         except Exception as e:
             self.log(f"[错误] TCP接收错误：{str(e)}")
             return b""
+
+    def close(self):
+        """关闭所有连接"""
+        if self.client_sock:
+            try:
+                self.client_sock.close()
+            except Exception as e:
+                self.log(f"[错误] 客户端套接字关闭错误：{str(e)}")
+        if self.sock:
+            try:
+                self.sock.close()
+            except Exception as e:
+                self.log(f"[错误] 服务器套接字关闭错误：{str(e)}")
+        self._is_connected = False
