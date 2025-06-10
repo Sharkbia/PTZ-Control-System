@@ -1,24 +1,35 @@
 # ui/main_window.py
 # Copyright © 2025 Sharkbia
 # MIT License - See LICENSE for details
-import os
 import json
+import os
 import queue
+import win32api
+import win32con
+import win32gui
+import win32print
 import tkinter as tk
-import ttkbootstrap as ttkb
-import serial.tools.list_ports
 from pathlib import Path
 from threading import Lock
+import ttkbootstrap as ttkb
 from tkinter import messagebox
+import serial.tools.list_ports
 from ttkbootstrap.constants import *
 from core.controller import ControlSystem
 
 
 class MainWindow:
     def __init__(self):
+        # 宽高自适应系统缩放
+        scale = self._get_scaling()
+        base_width = 280
+        base_height = 700
+        scaled_width = int(base_width * scale)
+        scaled_height = int(base_height * scale)
+
         self.root = ttkb.Window()
         self.root.title("PTZ 云台控制系统")
-        self.root.geometry("300x700")  # 增加默认宽度
+        self.root.geometry(f"{scaled_width}x{scaled_height}")
         self.root.attributes('-topmost', True)
         self.root.resizable(False, False)
 
@@ -129,9 +140,8 @@ class MainWindow:
         log_frame.rowconfigure(0, weight=1)
         log_frame.columnconfigure(0, weight=1)
 
-        # 加载配置并延迟设定宽度
+        # 加载现有配置
         self._load_config_to_ui()
-        self.root.after(200, lambda: self._adjust_window_width(config_frame))
 
     def _create_device_panel(self, parent, device, row):
         """创建设备配置面板"""
@@ -419,12 +429,14 @@ class MainWindow:
         except Exception as e:
             self.log(f"[错误] 刷新串口失败: {str(e)}")
 
-    def _adjust_window_width(self, config_frame):
-        """使窗口宽度略大于配置区域"""
-        self.root.update_idletasks()
-        config_width = config_frame.winfo_width()
-        target_width = config_width + 80  # 宽度略大，避免日志区被挤压
-        self.root.geometry(f"{target_width}x{self.root.winfo_height()}")
+    def _get_scaling(self):
+        """获取屏幕的缩放比例"""
+        try:
+            scaling = round(
+                win32print.GetDeviceCaps(win32gui.GetDC(0), win32con.DESKTOPHORZRES) / win32api.GetSystemMetrics(0), 2)
+            return scaling
+        except Exception as e:
+            self.log(f"[错误] 获取屏幕缩放比例失败: {str(e)}")
 
     def run(self):
         """启动主循环"""
