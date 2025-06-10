@@ -18,9 +18,13 @@ class MainWindow:
     def __init__(self):
         self.root = ttkb.Window()
         self.root.title("PTZ 云台控制系统")
-        self.root.geometry("280x700")
+        self.root.geometry("300x700")  # 增加默认宽度
         self.root.attributes('-topmost', True)
         self.root.resizable(False, False)
+
+        # 设置网格行列权重，使日志区域可扩展
+        self.root.rowconfigure(1, weight=1)
+        self.root.columnconfigure(0, weight=1)
 
         # 初始化变量
         self.control_system = None
@@ -83,7 +87,11 @@ class MainWindow:
     def _init_ui(self):
         """初始化用户界面"""
         main_frame = ttkb.Frame(self.root)
-        main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        # 设置主框架可扩展
+        main_frame.grid(row=0, column=0, sticky="nsew")
+        self.root.rowconfigure(0, weight=0)  # 顶部区域不扩展
+        self.root.rowconfigure(1, weight=1)  # 日志区域扩展
+        self.root.columnconfigure(0, weight=1)
 
         # 设备配置区域
         config_frame = ttkb.Labelframe(main_frame, text="设备配置", bootstyle=INFO)
@@ -94,28 +102,42 @@ class MainWindow:
 
         # 控制按钮
         btn_frame = ttkb.Frame(main_frame)
-        btn_frame.pack(pady=10)
+        btn_frame.pack(fill=tk.X, pady=10)  # 按钮区域横向填充
         self.start_btn = ttkb.Button(btn_frame, text="启动系统", command=self.toggle_system,
                                      bootstyle=(SUCCESS, OUTLINE))
         self.start_btn.pack(side=tk.LEFT, padx=5)
         ttkb.Button(btn_frame, text="清除日志", command=self.clear_log, bootstyle=(WARNING, OUTLINE)).pack(side=tk.LEFT)
 
-        # 日志区域
-        log_frame = ttkb.Labelframe(main_frame, text="系统日志", bootstyle=INFO)
+        # 日志区域 - 使用独立的Frame容器
+        log_container = ttkb.Frame(self.root)
+        log_container.grid(row=1, column=0, sticky="nsew", padx=10, pady=(0, 10))
+        log_container.rowconfigure(0, weight=1)
+        log_container.columnconfigure(0, weight=1)
+
+        log_frame = ttkb.Labelframe(log_container, text="系统日志", bootstyle=INFO)
         log_frame.pack(fill=tk.BOTH, expand=True)
+
         self.log_area = tk.Text(log_frame, state=tk.DISABLED, font=('微软雅黑', 10))
         scrollbar = ttkb.Scrollbar(log_frame, command=self.log_area.yview)
         self.log_area.configure(yscrollcommand=scrollbar.set)
-        self.log_area.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
 
-        # 加载现有配置
+        # 使用grid布局使日志区域可扩展
+        self.log_area.grid(row=0, column=0, sticky="nsew")
+        scrollbar.grid(row=0, column=1, sticky="ns")
+
+        # 设置行列权重
+        log_frame.rowconfigure(0, weight=1)
+        log_frame.columnconfigure(0, weight=1)
+
+        # 加载配置并延迟设定宽度
         self._load_config_to_ui()
+        self.root.after(200, lambda: self._adjust_window_width(config_frame))
 
     def _create_device_panel(self, parent, device, row):
         """创建设备配置面板"""
         frame = ttkb.Labelframe(parent, text=f"{device.upper()} 配置", bootstyle=INFO)
         frame.grid(row=row, column=0, sticky="ew", padx=5, pady=5)
+        frame.columnconfigure(1, weight=1)  # 使第二列可扩展
 
         # 协议选择
         ttkb.Label(frame, text="通信协议:").grid(row=0, column=0, sticky="w")
@@ -131,33 +153,44 @@ class MainWindow:
         """创建参数配置选项卡"""
         notebook = ttkb.Notebook(parent, bootstyle=INFO)
         notebook.grid(row=1, column=0, columnspan=2, sticky="ew")
+        parent.columnconfigure(1, weight=1)  # 使第二列可扩展
 
         # 串口配置
         serial_frame = ttkb.Frame(notebook)
-        ttkb.Label(serial_frame, text="串口号:").grid(row=0, column=0)
+        serial_frame.columnconfigure(1, weight=1)  # 使下拉框可扩展
+
+        ttkb.Label(serial_frame, text="串口号:").grid(row=0, column=0, sticky="w")
         serial_port = ttkb.Combobox(serial_frame, state="readonly")
         serial_port.bind("<Button-1>", lambda e: self._refresh_ports(serial_port))
-        serial_port.grid(row=0, column=1)
-        ttkb.Label(serial_frame, text="波特率:").grid(row=1, column=0)
+        serial_port.grid(row=0, column=1, sticky="ew")
+
+        ttkb.Label(serial_frame, text="波特率:").grid(row=1, column=0, sticky="w")
         baudrate = ttkb.Combobox(serial_frame, values=["2400", "9600", "19200", "38400", "115200"])
-        baudrate.grid(row=1, column=1)
+        baudrate.grid(row=1, column=1, sticky="ew")
+
         notebook.add(serial_frame, text="串口参数")
         setattr(self, f"{device}_serial", (serial_port, baudrate))
 
         # TCP配置
         tcp_frame = ttkb.Frame(notebook)
-        ttkb.Label(tcp_frame, text="IP地址:").grid(row=0, column=0)
+        tcp_frame.columnconfigure(1, weight=1)  # 使输入框可扩展
+
+        ttkb.Label(tcp_frame, text="IP地址:").grid(row=0, column=0, sticky="w")
         tcp_host = ttkb.Entry(tcp_frame)
-        tcp_host.grid(row=0, column=1)
-        ttkb.Label(tcp_frame, text="端口号:").grid(row=1, column=0)
+        tcp_host.grid(row=0, column=1, sticky="ew")
+
+        ttkb.Label(tcp_frame, text="端口号:").grid(row=1, column=0, sticky="w")
         tcp_port = ttkb.Entry(tcp_frame)
-        tcp_port.grid(row=1, column=1)
+        tcp_port.grid(row=1, column=1, sticky="ew")
+
         notebook.add(tcp_frame, text="TCP参数")
         setattr(self, f"{device}_tcp", (tcp_host, tcp_port))
 
         # 角度修正配置（仅Pelco）
         if device == "pelco":
             angle_frame = ttkb.Frame(notebook)
+            angle_frame.columnconfigure(1, weight=1)  # 使输入框可扩展
+
             fields = [
                 ("最小俯仰角:", "min_elevation"),
                 ("最大俯仰角:", "max_elevation"),
@@ -165,10 +198,11 @@ class MainWindow:
                 ("初始水平角:", "initial_azimuth")
             ]
             for i, (label, _) in enumerate(fields):
-                ttkb.Label(angle_frame, text=label).grid(row=i, column=0, padx=5, pady=2)
+                ttkb.Label(angle_frame, text=label).grid(row=i, column=0, padx=5, pady=2, sticky="w")
                 entry = ttkb.Entry(angle_frame)
-                entry.grid(row=i, column=1, padx=5)
+                entry.grid(row=i, column=1, padx=5, sticky="ew")
                 setattr(angle_frame, f"entry_{i}", entry)
+
             notebook.add(angle_frame, text="角度修正")
             setattr(self, f"{device}_angle", [getattr(angle_frame, f"entry_{i}") for i in range(4)])
 
@@ -384,6 +418,13 @@ class MainWindow:
                 combobox.set(ports[0])
         except Exception as e:
             self.log(f"[错误] 刷新串口失败: {str(e)}")
+
+    def _adjust_window_width(self, config_frame):
+        """使窗口宽度略大于配置区域"""
+        self.root.update_idletasks()
+        config_width = config_frame.winfo_width()
+        target_width = config_width + 80  # 宽度略大，避免日志区被挤压
+        self.root.geometry(f"{target_width}x{self.root.winfo_height()}")
 
     def run(self):
         """启动主循环"""
