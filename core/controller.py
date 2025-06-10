@@ -8,6 +8,7 @@ from hardware.interfaces import SerialHandler, TCPHandler
 
 class ControlSystem:
     def __init__(self, config, log_callback):
+        self.thread = Thread(target=self._run, daemon=True)
         self.config = config
         self.log = log_callback
         self.running = False
@@ -60,7 +61,6 @@ class ControlSystem:
         """启动系统"""
         if not self.running:
             self.running = True
-            self.thread = Thread(target=self._run, daemon=True)
             self.thread.start()
             self.log("[系统] 系统已启动")
 
@@ -130,7 +130,7 @@ class ControlSystem:
             azi = float(parts[0])
             ele = float(parts[1])
             success = (
-                    self.pelco.set_a    ngle(azi, 0x4B) and
+                    self.pelco.set_angle(azi, 0x4B) and
                     self.pelco.set_angle(ele, 0x4D)
             )
             return "ACK\r\n" if success else ""
