@@ -180,6 +180,9 @@ class MainWindow:
         protocol.set("串口")
         setattr(self, f"{device}_protocol", protocol)
 
+        # 绑定协议切换事件
+        protocol.bind("<<ComboboxSelected>>", lambda e, dev=device: self._on_protocol_changed(dev))
+
         # 参数选项卡
         self._create_settings_notebook(frame, device)
 
@@ -188,6 +191,9 @@ class MainWindow:
         notebook = ttkb.Notebook(parent, bootstyle=INFO)
         notebook.grid(row=1, column=0, columnspan=2, sticky="ew", padx=5, pady=5)
         parent.columnconfigure(1, weight=1)  # 使第二列可扩展
+
+        # 保存引用，方便协议切换时切换页签
+        setattr(self, f"{device}_notebook", notebook)
 
         # 串口配置
         serial_frame = ttkb.Frame(notebook)
@@ -239,6 +245,17 @@ class MainWindow:
 
             notebook.add(angle_frame, text="角度修正")
             setattr(self, f"{device}_angle", [getattr(angle_frame, f"entry_{i}") for i in range(4)])
+
+    def _on_protocol_changed(self, device):
+        """协议切换时自动切换参数页签"""
+        proto = getattr(self, f"{device}_protocol").get()
+        notebook = getattr(self, f"{device}_notebook")
+
+        # 根据协议选择切换页签索引
+        if proto == "串口":
+            notebook.select(0)
+        else:
+            notebook.select(1)
 
     def _setup_autosave(self):
         """配置自动保存功能"""
@@ -395,17 +412,20 @@ class MainWindow:
         """加载协议配置到UI组件"""
         proto = config["protocol"]
         getattr(self, f"{device}_protocol").set("串口" if proto == "serial" else "TCP")
+        notebook = getattr(self, f"{device}_notebook")
 
         if proto == "serial":
             serial_port, baudrate = getattr(self, f"{device}_serial")
             serial_port.set(config["serial"]["port"])
             baudrate.set(str(config["serial"]["baudrate"]))
+            notebook.select(0)
         else:
             host, port = getattr(self, f"{device}_tcp")
             host.delete(0, tk.END)
             host.insert(0, config["tcp"]["host"])
             port.delete(0, tk.END)
             port.insert(0, str(config["tcp"]["port"]))
+            notebook.select(1)
 
     def _apply_ui_settings(self, ui_config):
         """应用 UI 配置（如窗口置顶按钮状态）"""
