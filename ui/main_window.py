@@ -83,6 +83,9 @@ class MainWindow:
                     "azimuth_offset": 0,
                     "initial_azimuth": 0
                 }
+            },
+            "ui": {
+                "topmost": True
             }
         }
 
@@ -116,7 +119,8 @@ class MainWindow:
         btn_frame.columnconfigure(0, weight=1)  # 左边撑开
         btn_frame.columnconfigure(1, weight=0)  # 按钮
         btn_frame.columnconfigure(2, weight=0)  # 按钮
-        btn_frame.columnconfigure(3, weight=1)  # 右边撑开
+        btn_frame.columnconfigure(3, weight=0)  # 按钮
+        btn_frame.columnconfigure(4, weight=1)  # 右边撑开
 
         # 居中放置按钮
         self.start_btn = ttkb.Button(btn_frame, text="启动系统", command=self.toggle_system,
@@ -126,6 +130,21 @@ class MainWindow:
         clear_btn = ttkb.Button(btn_frame, text="清除日志", command=self.clear_log,
                                 bootstyle=(WARNING, OUTLINE))
         clear_btn.grid(row=0, column=2, padx=5)
+
+        # 置顶按钮
+        self.topmost_btn = ttkb.Button(btn_frame, text="窗口置顶", command=self.toggle_topmost,
+                                  bootstyle=(PRIMARY, OUTLINE))
+        self.topmost_btn.grid(row=0, column=3, padx=5)
+
+        # 判断配置文件中是否设置了置顶
+        config = self._load_config()
+        if config['ui']['topmost']:
+            self.root.attributes('-topmost', True)
+            self.topmost_btn.config(bootstyle=(PRIMARY, OUTLINE))
+        else:
+            self.root.attributes('-topmost', False)
+            self.topmost_btn.config(bootstyle=(SECONDARY, OUTLINE))
+
 
         # 日志区域
         log_frame = ttkb.Labelframe(self.root, text="系统日志", bootstyle=INFO)
@@ -308,21 +327,48 @@ class MainWindow:
         return config
 
     def _validate_config(self, config):
-        """验证配置有效性"""
-        # 基础协议验证
-        for device in ["gs232b", "pelco"]:
-            if config[device]["protocol"] == "tcp":
-                if not config[device]["tcp"].get("host"):
-                    raise ValueError(f"{device} 需要绑定IP地址")
-                if not 0 < config[device]["tcp"]["port"] <= 65535:
-                    raise ValueError(f"{device} 端口号必须为1-65535")
+        """验证配置有效性和完整性"""
+        # 必填字段检查
+        required_keys = {
+            "gs232b": ["protocol", "serial"],
+            "pelco": ["protocol", "serial", "angle_correction"],
+            "ui": ["topmost"]
+        }
 
-        # 角度参数验证
+        for section, keys in required_keys.items():
+            if section not in config:
+                # 补全缺少的配置
+                config[section] = {}
+            for key in keys:
+                if key not in config[section]:
+                    config[section][key] = None
+
+        # 协议字段检查
+        for device in ["gs232b", "pelco"]:
+            protocol = config[device].get("protocol")
+            if protocol not in ("serial", "tcp"):
+                raise ValueError(f"{device} 协议设置无效: {protocol}")
+
+            if protocol == "serial":
+                serial_cfg = config[device]["serial"]
+                if "port" not in serial_cfg or not serial_cfg["port"]:
+                    raise ValueError(f"{device} 串口配置缺少 port")
+                if "baudrate" not in serial_cfg or not isinstance(serial_cfg["baudrate"], int):
+                    raise ValueError(f"{device} 串口配置缺少或非法 baudrate")
+
+            if protocol == "tcp":
+                tcp_cfg = config[device].get("tcp", {})
+                if "host" not in tcp_cfg or not tcp_cfg["host"]:
+                    raise ValueError(f"{device} TCP配置缺少 host")
+                if "port" not in tcp_cfg or not (0 < tcp_cfg["port"] <= 65535):
+                    raise ValueError(f"{device} TCP端口号必须为 1-65535")
+
+        # Pelco 角度校正参数验证
         pelco_corr = config["pelco"]["angle_correction"]
         if not (-360 <= pelco_corr["azimuth_offset"] <= 360):
-            raise ValueError("方位角偏移必须在±360度之间")
+            raise ValueError("方位角偏移必须在 ±360 度之间")
         if not (0 <= pelco_corr["initial_azimuth"] <= 360):
-            raise ValueError("初始水平角必须在0-360度之间")
+            raise ValueError("初始水平角必须在 0-360 度之间")
         if pelco_corr["min_elevation"] > pelco_corr["max_elevation"]:
             raise ValueError("最小俯仰角不能大于最大俯仰角")
 
@@ -342,6 +388,9 @@ class MainWindow:
                 entry.delete(0, tk.END)
                 entry.insert(0, str(value))
 
+        # 加载界面配置
+        self._apply_ui_settings(config.get("ui", {}))
+
     def _load_protocol_config(self, device, config):
         """加载协议配置到UI组件"""
         proto = config["protocol"]
@@ -357,6 +406,13 @@ class MainWindow:
             host.insert(0, config["tcp"]["host"])
             port.delete(0, tk.END)
             port.insert(0, str(config["tcp"]["port"]))
+
+    def _apply_ui_settings(self, ui_config):
+        """应用 UI 配置（如窗口置顶按钮状态）"""
+        topmost = ui_config.get("topmost", False)
+        self.root.attributes("-topmost", topmost)
+        self.topmost_btn.config(text="取消置顶" if topmost else "窗口置顶",
+                                bootstyle=(PRIMARY, OUTLINE) if topmost else (SECONDARY, OUTLINE))
 
     # 日志处理相关方法
     def log(self, message: str):
@@ -442,6 +498,19 @@ class MainWindow:
             return scaling
         except Exception as e:
             return 1.0
+
+    def toggle_topmost(self):
+        """切换窗口置顶状态并更新按钮显示"""
+        current = self.root.attributes("-topmost")
+        new_state = not current
+        self.root.attributes("-topmost", new_state)
+        self.topmost_btn.config(text="取消置顶" if new_state else "窗口置顶",
+                                bootstyle=(PRIMARY, OUTLINE) if new_state else (SECONDARY, OUTLINE))
+        config = self._load_config()
+        config.setdefault("ui", {})["topmost"] = new_state
+        with open(self.config_file, 'w') as f:
+            json.dump(config, f, indent=4)
+        self.log(f"[UI] 窗口置顶状态已切换至{'置顶' if new_state else '取消置顶'}")
 
     def run(self):
         """启动主循环"""
