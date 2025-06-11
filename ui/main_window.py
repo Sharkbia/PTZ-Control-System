@@ -22,7 +22,7 @@ class MainWindow:
     def __init__(self):
         # 宽高自适应系统缩放
         scale = self._get_scaling()
-        base_width = 280
+        base_width = 300
         base_height = 700
         scaled_width = int(base_width * scale)
         scaled_height = int(base_height * scale)
@@ -31,7 +31,7 @@ class MainWindow:
         self.root.title("PTZ 云台控制系统")
         self.root.geometry(f"{scaled_width}x{scaled_height}")
         self.root.attributes('-topmost', True)
-        # self.root.resizable(False, False)
+        self.root.resizable(False, False)
 
         # 设置网格行列权重，使日志区域可扩展
         self.root.rowconfigure(0, weight=0)  # 顶部区域不扩展
