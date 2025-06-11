@@ -31,10 +31,11 @@ class MainWindow:
         self.root.title("PTZ 云台控制系统")
         self.root.geometry(f"{scaled_width}x{scaled_height}")
         self.root.attributes('-topmost', True)
-        self.root.resizable(False, False)
+        # self.root.resizable(False, False)
 
         # 设置网格行列权重，使日志区域可扩展
-        self.root.rowconfigure(1, weight=1)
+        self.root.rowconfigure(0, weight=0)  # 顶部区域不扩展
+        self.root.rowconfigure(1, weight=1)  # 日志区域扩展
         self.root.columnconfigure(0, weight=1)
 
         # 初始化变量
@@ -97,48 +98,52 @@ class MainWindow:
 
     def _init_ui(self):
         """初始化用户界面"""
+        # 主框架 - 使用网格布局
         main_frame = ttkb.Frame(self.root)
-        # 设置主框架可扩展
-        main_frame.grid(row=0, column=0, sticky="nsew")
-        self.root.rowconfigure(0, weight=0)  # 顶部区域不扩展
-        self.root.rowconfigure(1, weight=1)  # 日志区域扩展
-        self.root.columnconfigure(0, weight=1)
+        main_frame.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
 
         # 设备配置区域
         config_frame = ttkb.Labelframe(main_frame, text="设备配置", bootstyle=INFO)
-        config_frame.pack(fill=tk.X, pady=5)
+        config_frame.grid(row=0, column=0, sticky="ew", padx=5, pady=5)
 
+        # 创建设备面板
         self._create_device_panel(config_frame, "gs232b", 0)
         self._create_device_panel(config_frame, "pelco", 1)
 
-        # 控制按钮
+        # 控制按钮区域
         btn_frame = ttkb.Frame(main_frame)
-        btn_frame.pack(fill=tk.X, pady=10)  # 按钮区域横向填充
+        btn_frame.grid(row=1, column=0, sticky="ew", padx=5, pady=5)
+        btn_frame.columnconfigure(0, weight=1)  # 左边撑开
+        btn_frame.columnconfigure(1, weight=0)  # 按钮
+        btn_frame.columnconfigure(2, weight=0)  # 按钮
+        btn_frame.columnconfigure(3, weight=1)  # 右边撑开
+
+        # 居中放置按钮
         self.start_btn = ttkb.Button(btn_frame, text="启动系统", command=self.toggle_system,
                                      bootstyle=(SUCCESS, OUTLINE))
-        self.start_btn.pack(side=tk.LEFT, padx=5)
-        ttkb.Button(btn_frame, text="清除日志", command=self.clear_log, bootstyle=(WARNING, OUTLINE)).pack(side=tk.LEFT)
+        self.start_btn.grid(row=0, column=1, padx=5)
 
-        # 日志区域 - 使用独立的Frame容器
-        log_container = ttkb.Frame(self.root)
-        log_container.grid(row=1, column=0, sticky="nsew", padx=10, pady=(0, 10))
-        log_container.rowconfigure(0, weight=1)
-        log_container.columnconfigure(0, weight=1)
+        clear_btn = ttkb.Button(btn_frame, text="清除日志", command=self.clear_log,
+                                bootstyle=(WARNING, OUTLINE))
+        clear_btn.grid(row=0, column=2, padx=5)
 
-        log_frame = ttkb.Labelframe(log_container, text="系统日志", bootstyle=INFO)
-        log_frame.pack(fill=tk.BOTH, expand=True)
+        # 日志区域
+        log_frame = ttkb.Labelframe(self.root, text="系统日志", bootstyle=INFO)
+        log_frame.grid(row=1, column=0, sticky="nsew", padx=10, pady=(0, 10))
 
+        # 设置日志区域的权重
+        self.root.rowconfigure(1, weight=1)
+        log_frame.rowconfigure(0, weight=1)
+        log_frame.columnconfigure(0, weight=1)
+
+        # 日志文本框和滚动条
         self.log_area = tk.Text(log_frame, state=tk.DISABLED, font=('微软雅黑', 10))
         scrollbar = ttkb.Scrollbar(log_frame, command=self.log_area.yview)
         self.log_area.configure(yscrollcommand=scrollbar.set)
 
-        # 使用grid布局使日志区域可扩展
+        # 使用网格布局放置日志组件
         self.log_area.grid(row=0, column=0, sticky="nsew")
         scrollbar.grid(row=0, column=1, sticky="ns")
-
-        # 设置行列权重
-        log_frame.rowconfigure(0, weight=1)
-        log_frame.columnconfigure(0, weight=1)
 
         # 加载现有配置
         self._load_config_to_ui()
@@ -150,9 +155,9 @@ class MainWindow:
         frame.columnconfigure(1, weight=1)  # 使第二列可扩展
 
         # 协议选择
-        ttkb.Label(frame, text="通信协议:").grid(row=0, column=0, sticky="w")
-        protocol = ttkb.Combobox(frame, values=["串口", "TCP"], state="readonly")
-        protocol.grid(row=0, column=1, sticky="ew")
+        ttkb.Label(frame, text="通信协议:").grid(row=0, column=0, sticky="w", padx=5, pady=2)
+        protocol = ttkb.Combobox(frame, values=["串口", "TCP"], state="readonly", width=8)
+        protocol.grid(row=0, column=1, sticky="ew", padx=5, pady=2)
         protocol.set("串口")
         setattr(self, f"{device}_protocol", protocol)
 
@@ -162,21 +167,21 @@ class MainWindow:
     def _create_settings_notebook(self, parent, device):
         """创建参数配置选项卡"""
         notebook = ttkb.Notebook(parent, bootstyle=INFO)
-        notebook.grid(row=1, column=0, columnspan=2, sticky="ew")
+        notebook.grid(row=1, column=0, columnspan=2, sticky="ew", padx=5, pady=5)
         parent.columnconfigure(1, weight=1)  # 使第二列可扩展
 
         # 串口配置
         serial_frame = ttkb.Frame(notebook)
         serial_frame.columnconfigure(1, weight=1)  # 使下拉框可扩展
 
-        ttkb.Label(serial_frame, text="串口号:").grid(row=0, column=0, sticky="w")
+        ttkb.Label(serial_frame, text="串口号:").grid(row=0, column=0, sticky="w", padx=5, pady=2)
         serial_port = ttkb.Combobox(serial_frame, state="readonly")
         serial_port.bind("<Button-1>", lambda e: self._refresh_ports(serial_port))
-        serial_port.grid(row=0, column=1, sticky="ew")
+        serial_port.grid(row=0, column=1, sticky="ew", padx=5, pady=2)
 
-        ttkb.Label(serial_frame, text="波特率:").grid(row=1, column=0, sticky="w")
+        ttkb.Label(serial_frame, text="波特率:").grid(row=1, column=0, sticky="w", padx=5, pady=2)
         baudrate = ttkb.Combobox(serial_frame, values=["2400", "9600", "19200", "38400", "115200"])
-        baudrate.grid(row=1, column=1, sticky="ew")
+        baudrate.grid(row=1, column=1, sticky="ew", padx=5, pady=2)
 
         notebook.add(serial_frame, text="串口参数")
         setattr(self, f"{device}_serial", (serial_port, baudrate))
@@ -185,13 +190,13 @@ class MainWindow:
         tcp_frame = ttkb.Frame(notebook)
         tcp_frame.columnconfigure(1, weight=1)  # 使输入框可扩展
 
-        ttkb.Label(tcp_frame, text="IP地址:").grid(row=0, column=0, sticky="w")
+        ttkb.Label(tcp_frame, text="IP地址:").grid(row=0, column=0, sticky="w", padx=5, pady=2)
         tcp_host = ttkb.Entry(tcp_frame)
-        tcp_host.grid(row=0, column=1, sticky="ew")
+        tcp_host.grid(row=0, column=1, sticky="ew", padx=5, pady=2)
 
-        ttkb.Label(tcp_frame, text="端口号:").grid(row=1, column=0, sticky="w")
+        ttkb.Label(tcp_frame, text="端口号:").grid(row=1, column=0, sticky="w", padx=5, pady=2)
         tcp_port = ttkb.Entry(tcp_frame)
-        tcp_port.grid(row=1, column=1, sticky="ew")
+        tcp_port.grid(row=1, column=1, sticky="ew", padx=5, pady=2)
 
         notebook.add(tcp_frame, text="TCP参数")
         setattr(self, f"{device}_tcp", (tcp_host, tcp_port))
@@ -210,7 +215,7 @@ class MainWindow:
             for i, (label, _) in enumerate(fields):
                 ttkb.Label(angle_frame, text=label).grid(row=i, column=0, padx=5, pady=2, sticky="w")
                 entry = ttkb.Entry(angle_frame)
-                entry.grid(row=i, column=1, padx=5, sticky="ew")
+                entry.grid(row=i, column=1, padx=5, pady=2, sticky="ew")
                 setattr(angle_frame, f"entry_{i}", entry)
 
             notebook.add(angle_frame, text="角度修正")
@@ -436,7 +441,7 @@ class MainWindow:
                 win32print.GetDeviceCaps(win32gui.GetDC(0), win32con.DESKTOPHORZRES) / win32api.GetSystemMetrics(0), 2)
             return scaling
         except Exception as e:
-            self.log(f"[错误] 获取屏幕缩放比例失败: {str(e)}")
+            return 1.0
 
     def run(self):
         """启动主循环"""
