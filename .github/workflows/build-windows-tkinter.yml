@@ -39,8 +39,12 @@ jobs:
           output-dir: build
 
       - name: Rename Artifact
+        shell: powershell
         run: |
-          mkdir build || echo "build folder exists"
+          if (-Not (Test-Path -Path build)) {
+            Write-Error "目录 build 不存在，终止执行"
+            exit 1
+          }
           move build\main.exe build\PTZ-Control-System.exe
 
       - name: Upload Artifact
