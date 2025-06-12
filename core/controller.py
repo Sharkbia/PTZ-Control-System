@@ -152,6 +152,11 @@ class ControlSystem:
             return f"AZ={azimuth_deg:03d} EL={elevation_deg:03d}\r\n"
         return ""
 
+    def select_angle(self, angle, set_cmd):
+        """选择角度并执行命令。"""
+        self.log(f"[命令] 选择角度 {angle} 并执行 {'水平角度调整' if set_cmd == 0x4D else '俯仰角度调整'}命令")
+        self.pelco.set_angle(angle, set_cmd)
+
     def stop(self):
         with self._connection_lock:
             self.running = False

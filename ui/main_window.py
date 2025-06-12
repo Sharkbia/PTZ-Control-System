@@ -112,6 +112,9 @@ class MainWindow:
         self._create_device_panel(config_frame, "gs232b", 0)
         self._create_device_panel(config_frame, "pelco", 1)
 
+        # 创建俯仰角手动调整区域
+        self._create_device_panel(config_frame, "AZ/EL", 2)
+
         # 控制按钮区域
         btn_frame = ttkb.Frame(main_frame)
         btn_frame.grid(row=1, column=0, sticky="ew", padx=5, pady=5)
@@ -137,7 +140,7 @@ class MainWindow:
 
         # 置顶按钮
         self.topmost_btn = ttkb.Button(btn_frame, text="窗口置顶", command=self.toggle_topmost,
-                                  bootstyle=(PRIMARY, OUTLINE))
+                                       bootstyle=(PRIMARY, OUTLINE))
         self.topmost_btn.grid(row=0, column=4, padx=5)
 
         # 判断配置文件中是否设置了置顶
@@ -148,7 +151,6 @@ class MainWindow:
         else:
             self.root.attributes('-topmost', False)
             self.topmost_btn.config(bootstyle=(SECONDARY, OUTLINE))
-
 
         # 日志区域
         log_frame = ttkb.Labelframe(self.root, text="系统日志", bootstyle=INFO)
@@ -173,22 +175,43 @@ class MainWindow:
 
     def _create_device_panel(self, parent, device, row):
         """创建设备配置面板"""
-        frame = ttkb.Labelframe(parent, text=f"{device.upper()} 配置", bootstyle=INFO)
+        frame = ttkb.Labelframe(parent, text=f"{device.upper()}", bootstyle=INFO)
         frame.grid(row=row, column=0, sticky="ew", padx=5, pady=5)
         frame.columnconfigure(1, weight=1)  # 使第二列可扩展
 
-        # 协议选择
-        ttkb.Label(frame, text="通信协议:").grid(row=0, column=0, sticky="w", padx=5, pady=2)
-        protocol = ttkb.Combobox(frame, values=["串口", "TCP"], state="readonly", width=8)
-        protocol.grid(row=0, column=1, sticky="ew", padx=5, pady=2)
-        protocol.set("串口")
-        setattr(self, f"{device}_protocol", protocol)
+        if device == "AZ/EL":  # 俯仰角手动调整
+            self._create_az_el_panel(frame)
+        else:
+            # 协议选择
+            ttkb.Label(frame, text="通信协议:").grid(row=0, column=0, sticky="w", padx=5, pady=2)
+            protocol = ttkb.Combobox(frame, values=["串口", "TCP"], state="readonly", width=8)
+            protocol.grid(row=0, column=1, sticky="ew", padx=5, pady=2)
+            protocol.set("串口")
+            setattr(self, f"{device}_protocol", protocol)
 
-        # 绑定协议切换事件
-        protocol.bind("<<ComboboxSelected>>", lambda e, dev=device: self._on_protocol_changed(dev))
+            # 绑定协议切换事件
+            protocol.bind("<<ComboboxSelected>>", lambda e, dev=device: self._on_protocol_changed(dev))
 
-        # 参数选项卡
-        self._create_settings_notebook(frame, device)
+            # 参数选项卡
+            self._create_settings_notebook(frame, device)
+
+    def _create_az_el_panel(self, parent):  # 俯仰角手动调整
+        """创建俯仰角手动调整面板"""
+        # 水平角调整按钮
+        ttkb.Label(parent, text="水平角度:").grid(row=0, column=0, sticky="w", padx=5, pady=2)
+        azimuth_entry = ttkb.Entry(parent)
+        azimuth_entry.grid(row=0, column=1, sticky="ew", padx=5, pady=2)
+        azimuth_btn = ttkb.Button(parent, text="执行",
+                                  command=lambda: self.set_az_el(azimuth_entry.get(), 0x4B))
+        azimuth_btn.grid(row=0, column=2, padx=5)
+
+        # 俯仰角调整按钮
+        ttkb.Label(parent, text="俯仰角度:").grid(row=1, column=0, sticky="w", padx=5, pady=2)
+        elevation_entry = ttkb.Entry(parent)
+        elevation_entry.grid(row=1, column=1, sticky="ew", padx=5, pady=2)
+        elevation_btn = ttkb.Button(parent, text="执行",
+                                    command=lambda: self.set_az_el(elevation_entry.get(), 0x4D))
+        elevation_btn.grid(row=1, column=2, padx=5)
 
     def _create_settings_notebook(self, parent, device):
         """创建参数配置选项卡"""
@@ -501,6 +524,15 @@ class MainWindow:
         with open(self.config_file, 'w') as f:
             json.dump(config, f, indent=4)
         self.log(f"[UI] 窗口置顶状态已切换至{'置顶' if new_state else '取消置顶'}")
+
+    def set_az_el(self, angle, set_cmd):
+        """设置角度"""
+        if self.running:
+            if angle == '': return
+            angle = float(angle)
+            self.control_system.select_angle(angle, set_cmd)
+        else:
+            self.log("[错误] 系统未启动，无法设置角度")
 
     def run(self):
         """启动主循环"""
