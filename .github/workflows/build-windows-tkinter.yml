@@ -25,10 +25,10 @@ jobs:
           pip install nuitka
 
       - name: Build with Nuitka
-        run: nuitka main.py --standalone --onefile --windows-disable-console --enable-plugin=tk-inter
+        run: nuitka main.py --standalone --onefile --windows-disable-console --enable-plugin=tk-inter --output-filename=PTZ-Control-System.exe
 
       - name: Upload EXE
         uses: actions/upload-artifact@v4
         with:
           name: tkinter-app
-          path: main.exe
+          path: PTZ-Control-System.exe
