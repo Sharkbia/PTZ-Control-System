@@ -60,7 +60,7 @@ class PelcoDProtocol:
         return self._send_angle_command(adjusted, 0x4D)
 
     def _handle_azimuth(self, angle: float) -> bool:
-        if angle <= 0:
+        if angle < 0:
             return False
         if angle > 360:
             angle %= 360
