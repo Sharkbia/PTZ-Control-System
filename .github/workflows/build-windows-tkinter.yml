@@ -1,37 +1,51 @@
-name: Build Windows Tkinter App
+name: Windows x64 Build with Python 3.11
 
 on:
   push:
-    branches: [main]
+    branches: ["main"]
   pull_request:
+    branches: ["main"]
+  workflow_dispatch:
 
 jobs:
-  build:
+  build-windows:
     runs-on: windows-latest
 
     steps:
-      - name: Checkout source code
-        uses: actions/checkout@v4
+      - name: Checkout Repository
+        uses: actions/checkout@v3
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v4
         with:
-          python-version: '3.8'
+          python-version: '3.11.8'
+          architecture: 'x64'
+          cache: 'pip'
+          cache-dependency-path: '**/requirements*.txt'
 
-      - name: Install dependencies
+      - name: Install Dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install nuitka
 
-      - name: Build with Nuitka
-        run: nuitka main.py --standalone --onefile --windows-disable-console --enable-plugin=tk-inter --output-filename=PTZ-Control-System.exe --show-progress
-
-      - name: List output files
-        run: dir
-
-      - name: Upload EXE
-        uses: actions/upload-artifact@v4
+      - name: Nuitka Build x64 (Windows)
+        uses: Nuitka/Nuitka-Action@main
         with:
-          name: tkinter-app
-          path: PTZ-Control-System.exe
+          nuitka-version: main
+          script-name: main.py
+          onefile: true
+          standalone: true
+          enable-plugins: tk-inter
+          disable-console: true
+          output-dir: build
+
+      - name: Rename Artifact
+        run: |
+          mkdir build || echo "build folder exists"
+          move build\main.exe build\PTZ-Control-System.exe
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: Windows Build
+          path: build/PTZ-Control-System.exe
