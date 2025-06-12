@@ -33,8 +33,7 @@ jobs:
         with:
           nuitka-version: main
           script-name: main.py
-          onefile: true
-          standalone: true
+          mode: onefile
           enable-plugins: tk-inter
           disable-console: true
           output-dir: build
