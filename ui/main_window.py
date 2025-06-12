@@ -48,7 +48,6 @@ class MainWindow:
         # 初始化配置系统
         self._init_config()
         self._init_ui()
-        self._setup_autosave()
         self.root.after(100, self._process_log_queue)
 
     def _get_config_path(self) -> str:
@@ -120,7 +119,8 @@ class MainWindow:
         btn_frame.columnconfigure(1, weight=0)  # 按钮
         btn_frame.columnconfigure(2, weight=0)  # 按钮
         btn_frame.columnconfigure(3, weight=0)  # 按钮
-        btn_frame.columnconfigure(4, weight=1)  # 右边撑开
+        btn_frame.columnconfigure(4, weight=0)  # 按钮
+        btn_frame.columnconfigure(5, weight=1)  # 右边撑开
 
         # 居中放置按钮
         self.start_btn = ttkb.Button(btn_frame, text="启动系统", command=self.toggle_system,
@@ -131,10 +131,14 @@ class MainWindow:
                                 bootstyle=(WARNING, OUTLINE))
         clear_btn.grid(row=0, column=2, padx=5)
 
+        save_btn = ttkb.Button(btn_frame, text="保存配置", command=self._save_config,
+                               bootstyle=(PRIMARY, OUTLINE))
+        save_btn.grid(row=0, column=3, padx=5)
+
         # 置顶按钮
         self.topmost_btn = ttkb.Button(btn_frame, text="窗口置顶", command=self.toggle_topmost,
                                   bootstyle=(PRIMARY, OUTLINE))
-        self.topmost_btn.grid(row=0, column=3, padx=5)
+        self.topmost_btn.grid(row=0, column=4, padx=5)
 
         # 判断配置文件中是否设置了置顶
         config = self._load_config()
@@ -257,40 +261,6 @@ class MainWindow:
         else:
             notebook.select(1)
 
-    def _setup_autosave(self):
-        """配置自动保存功能"""
-        # 为所有输入组件绑定失焦事件
-        components = [
-            *self._get_all_entries(),
-            *self._get_all_comboboxes()
-        ]
-        for widget in components:
-            widget.bind("<FocusOut>", lambda e: self._save_and_reload())
-
-    def _get_all_entries(self):
-        """获取所有输入框组件"""
-        entries = []
-        for device in ["gs232b", "pelco"]:
-            entries.extend(getattr(self, f"{device}_tcp"))
-            if device == "pelco":
-                entries.extend(getattr(self, f"{device}_angle"))
-        return entries
-
-    def _get_all_comboboxes(self):
-        """获取所有下拉框组件"""
-        comboboxes = []
-        for device in ["gs232b", "pelco"]:
-            comboboxes.append(getattr(self, f"{device}_protocol"))
-            comboboxes.extend(getattr(self, f"{device}_serial"))
-        return comboboxes
-
-    def _save_and_reload(self):
-        """保存配置并热更新"""
-        try:
-            self._save_config()
-        except Exception as e:
-            self.log(f"[错误] 配置更新失败: {str(e)}")
-
     def _save_config(self):
         """保存当前配置到文件"""
         config = {
@@ -301,7 +271,7 @@ class MainWindow:
 
         with open(self.config_file, 'w') as f:
             json.dump(config, f, indent=2)
-        self.log("[系统] 配置已自动保存")
+        self.log("[系统] 配置已保存")
 
     def _build_device_config(self, device):
         """构建单个设备配置"""
