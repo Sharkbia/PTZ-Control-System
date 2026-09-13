@@ -2,19 +2,19 @@
 # Copyright © 2025 Sharkbia
 # MIT License - See LICENSE for details
 from threading import Thread, Lock
-from core.protocols import PelcoDProtocol, GS232BProtocol
-from hardware.interfaces import SerialHandler, TCPHandler
+from core.protocols import PelcoDProtocol, parse_gs232b_command
+from hardware.interfaces import SerialHandler, TCPHandler, UDPHandler
 
 
 class ControlSystem:
     def __init__(self, config, log_callback):
-        self.thread = Thread(target=self._run, daemon=True)
         self.config = config
         self.log = log_callback
         self.running = False
         self._connection_lock = Lock()
         self.gs232b = None
         self.pelco = None
+        self.thread = None
 
         try:
             self._init_connections()
@@ -49,10 +49,14 @@ class ControlSystem:
         protocol = config["protocol"]
         handlers = {
             "serial": SerialHandler,
-            "tcp": TCPHandler
+            "tcp": TCPHandler,
+            "udp": UDPHandler
         }
 
-        handler = handlers[protocol](config, self.log)
+        handler_cls = handlers.get(protocol)
+        if not handler_cls:
+            raise ValueError(f"不支持的协议: {protocol}")
+        handler = handler_cls(config, self.log)
         if not handler.connect():
             raise ConnectionError(f"{device} 连接失败")
         return handler
@@ -60,7 +64,11 @@ class ControlSystem:
     def start(self):
         """启动系统"""
         if not self.running:
+            if self.thread and self.thread.is_alive():
+                self.log("[警告] 系统已在运行中")
+                return
             self.running = True
+            self.thread = Thread(target=self._run, daemon=True)
             self.thread.start()
             self.log("[系统] 系统已启动")
 
@@ -70,7 +78,7 @@ class ControlSystem:
             try:
                 data = self.gs232b.recv(1024, timeout=1.0)
                 if data:
-                    cmd = GS232BProtocol.parse_command(data)
+                    cmd = parse_gs232b_command(data)
                     self.log(f"[命令] 收到命令: {cmd}")
                     response = self._process_command(cmd)
                     if response:
@@ -80,25 +88,23 @@ class ControlSystem:
                 self.log(f"[错误] 处理错误: {str(e)}")
 
     def _process_command(self, cmd: str) -> str:
-        command_handlers = {
-            'C2': self._handle_c2,
-            'W': self._handle_w,
-            r'\set_pos': self._handle_setpos
-        }
-
-        # 处理组合命令
+        # 处理组合命令 C2W / WC2
         if cmd.startswith("C2W") or (cmd.startswith("W") and cmd.endswith("C2")):
             return self._handle_combined_command(cmd)
 
-        # 遍历处理标准命令
-        for prefix, handler in command_handlers.items():
+        # 匹配标准命令
+        for prefix, handler in [
+            ('C2', self._handle_c2),
+            ('W', self._handle_w),
+            ('\set_pos', self._handle_setpos),
+        ]:
             if cmd.startswith(prefix):
                 return handler(cmd[len(prefix):].strip())
 
         return ""
 
     def _handle_combined_command(self, cmd: str) -> str:
-        self.log("[命令] 接收到 C2 和 W 命令")
+        self.log("[命令] 接收到 C2 和 W 组合命令")
         w_cmd = cmd[3:] if cmd.startswith("C2W") else cmd[1:-2]
         w_result = self._execute_angle_control_command(w_cmd)
         return self._execute_angle_query_command() if w_result else ""
@@ -124,14 +130,14 @@ class ControlSystem:
             return ""
 
     def _execute_angle_control_command(self, w_cmd: str) -> str:
-        """执行 W 命令。"""
+        """执行 W 命令：设置方位角和俯仰角"""
         try:
             parts = w_cmd.split()
             azi = float(parts[0])
             ele = float(parts[1])
             success = (
-                    self.pelco.set_angle(azi, 0x4B) and
-                    self.pelco.set_angle(ele, 0x4D)
+                    self.pelco.set_angle(azi, PelcoDProtocol.CMD_SET_AZIMUTH) and
+                    self.pelco.set_angle(ele, PelcoDProtocol.CMD_SET_ELEVATION)
             )
             return "ACK\r\n" if success else ""
         except (IndexError, ValueError):
@@ -139,22 +145,22 @@ class ControlSystem:
             return ""
 
     def _execute_angle_query_command(self) -> str:
-        """执行 C2 命令。"""
+        """执行 C2 命令：查询当前方位角和俯仰角"""
         self.log("[命令] 处理 C2 查询")
-        azimuth = self.pelco.query_angle(0x51)
-        elevation = self.pelco.query_angle(0x53)
+        azimuth = self.pelco.query_angle(PelcoDProtocol.CMD_QUERY_AZIMUTH)
+        elevation = self.pelco.query_angle(PelcoDProtocol.CMD_QUERY_ELEVATION)
 
         if azimuth is not None and elevation is not None:
             azimuth_deg = azimuth // 100
             elevation_deg = elevation // 100
-            log_msg = f"水平角度 {azimuth_deg} 俯仰角度 {elevation_deg}"
-            self.log(log_msg)
+            self.log(f"水平角度 {azimuth_deg} 俯仰角度 {elevation_deg}")
             return f"AZ={azimuth_deg:03d} EL={elevation_deg:03d}\r\n"
         return ""
 
     def select_angle(self, angle, set_cmd):
         """选择角度并执行命令。"""
-        self.log(f"[命令] 选择角度 {angle} 并执行 {'水平角度调整' if set_cmd == 0x4D else '俯仰角度调整'}命令")
+        axis = "俯仰角度" if set_cmd == PelcoDProtocol.CMD_SET_ELEVATION else "水平角度"
+        self.log(f"[命令] 选择角度 {angle} 并执行{axis}调整命令")
         self.pelco.set_angle(angle, set_cmd)
 
     def stop(self):
@@ -168,5 +174,5 @@ class ControlSystem:
                 self.pelco.hw.close()
                 self.pelco = None
                 self.log("[连接] Pelco-D连接已关闭")
-            if self.thread.is_alive():
+            if self.thread and self.thread.is_alive():
                 self.thread.join(timeout=5)

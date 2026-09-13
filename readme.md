@@ -1,5 +1,6 @@
 # PTZ 云台控制系统
 
+[![Version](https://img.shields.io/badge/版本-v2.1.0-blue.svg)]()
 [![License: MIT](https://img.shields.io/badge/许可证-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 ## 项目描述

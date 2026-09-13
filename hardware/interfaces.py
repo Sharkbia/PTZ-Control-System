@@ -8,10 +8,10 @@ from abc import ABC, abstractmethod
 
 
 class HardwareInterface(ABC):
-    def __init__(self, config, log_callback):  # 新增 log_callback 参数
+    def __init__(self, config, log_callback):
         self.config = config
-        self.log = log_callback  # 保存日志回调函数
-        self._is_connected = False  # 可选：统一管理连接状态
+        self.log = log_callback
+        self._is_connected = False
 
     @abstractmethod
     def connect(self) -> bool: ...
@@ -27,11 +27,9 @@ class HardwareInterface(ABC):
 
 
 class SerialHandler(HardwareInterface):
-    def __init__(self, config, log_callback):  # 新增 log_callback
-        super().__init__(config, log_callback)  # 调用父类初始化
-        self.config = config
+    def __init__(self, config, log_callback):
+        super().__init__(config, log_callback)
         self.ser = None
-        self._is_connected = False
 
     def connect(self) -> bool:
         if self._is_connected:
@@ -57,7 +55,7 @@ class SerialHandler(HardwareInterface):
 
     def recv(self, length: int, timeout: float = None) -> bytes:
         try:
-            if timeout:
+            if timeout is not None:
                 original_timeout = self.ser.timeout
                 self.ser.timeout = timeout
                 data = self.ser.read(length)
@@ -70,53 +68,65 @@ class SerialHandler(HardwareInterface):
 
     def close(self):
         if self._is_connected and self.ser:
-            self.ser.close()
-            self._is_connected = False
+            try:
+                self.ser.close()
+            except Exception:
+                pass
+            finally:
+                self._is_connected = False
 
 
 class TCPHandler(HardwareInterface):
+    CONNECT_TIMEOUT = 30  # 连接等待超时（秒）
+
     def __init__(self, config, log_callback):
         super().__init__(config, log_callback)
         self.sock = None
         self.client_sock = None
-        self._is_connected = False
 
     def connect(self) -> bool:
         if self._is_connected:
             return True
 
         try:
-            # 创建服务器套接字
             self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             self.sock.bind((self.config["tcp"]["host"], self.config["tcp"]["port"]))
             self.sock.listen(1)
             self.log(f"[TCP] 正在 {self.config['tcp']['host']}:{self.config['tcp']['port']} 监听...")
 
+            import time
+            start_time = time.time()
             while not self._is_connected:
-                # 使用 select 来检查是否有新的连接请求
-                readable, writable, exceptional = select.select([self.sock], [], [], 0.5)
+                # 检查是否超时
+                if time.time() - start_time > self.CONNECT_TIMEOUT:
+                    self.close()
+                    raise ConnectionError(f"TCP 等待连接超时（{self.CONNECT_TIMEOUT}秒）")
+
+                readable, _, _ = select.select([self.sock], [], [], 0.5)
                 if self.sock in readable:
                     try:
-                        # 尝试接受客户端连接
                         self.client_sock, addr = self.sock.accept()
-                        self.client_sock.setblocking(False)  # 设置为非阻塞模式
+                        # 统一使用 settimeout 而非 setblocking
                         self._is_connected = True
                         self.log(f"[TCP] 已接受来自 {addr} 的连接")
                     except BlockingIOError:
-                        # 当前没有客户端连接，继续等待
                         pass
 
             return True
 
         except Exception as e:
-            raise ConnectionError(f"TCP服务器启动失败：{str(e)}")
+            if not isinstance(e, ConnectionError):
+                raise ConnectionError(f"TCP服务器启动失败：{str(e)}")
+            raise
 
     def send(self, data: bytes) -> bool:
         if not self._is_connected or not self.client_sock:
             return False
         try:
-            return self.client_sock.send(data) == len(data)
+            # 使用 sendall 确保数据完整发送
+            self.client_sock.sendall(data)
+            return True
         except Exception as e:
             self.log(f"[错误] TCP发送错误：{str(e)}")
             return False
@@ -125,7 +135,7 @@ class TCPHandler(HardwareInterface):
         if not self._is_connected or not self.client_sock:
             return b""
         try:
-            if timeout:
+            if timeout is not None:
                 self.client_sock.settimeout(timeout)
             return self.client_sock.recv(length)
         except socket.timeout:
@@ -139,11 +149,74 @@ class TCPHandler(HardwareInterface):
         if self.client_sock:
             try:
                 self.client_sock.close()
-            except Exception as e:
-                self.log(f"[错误] 客户端套接字关闭错误：{str(e)}")
+            except Exception:
+                pass
         if self.sock:
             try:
                 self.sock.close()
-            except Exception as e:
-                self.log(f"[错误] 服务器套接字关闭错误：{str(e)}")
+            except Exception:
+                pass
         self._is_connected = False
+
+
+class UDPHandler(HardwareInterface):
+    def __init__(self, config, log_callback):
+        super().__init__(config, log_callback)
+        self.sock = None
+        self._remote_addr = None
+
+    def connect(self) -> bool:
+        if self._is_connected:
+            return True
+
+        try:
+            udp_cfg = self.config["udp"]
+            self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+
+            local_host = udp_cfg.get("local_host", "0.0.0.0")
+            local_port = udp_cfg["local_port"]
+            self.sock.bind((local_host, local_port))
+
+            remote_host = udp_cfg["remote_host"]
+            remote_port = udp_cfg["remote_port"]
+            self._remote_addr = (remote_host, remote_port)
+
+            self._is_connected = True
+            self.log(f"[UDP] 已绑定 {local_host}:{local_port}，远程 {remote_host}:{remote_port}")
+            return True
+        except Exception as e:
+            raise ConnectionError(f"UDP 连接失败：{str(e)}")
+
+    def send(self, data: bytes) -> bool:
+        if not self._is_connected:
+            return False
+        try:
+            sent = self.sock.sendto(data, self._remote_addr)
+            return sent == len(data)
+        except Exception as e:
+            self.log(f"[错误] UDP 发送失败: {str(e)}")
+            return False
+
+    def recv(self, length: int, timeout: float = None) -> bytes:
+        if not self._is_connected:
+            return b""
+        try:
+            if timeout is not None:
+                self.sock.settimeout(timeout)
+            data, _ = self.sock.recvfrom(length)
+            return data
+        except socket.timeout:
+            return b""
+        except Exception as e:
+            self.log(f"[错误] UDP 接收错误: {str(e)}")
+            return b""
+
+    def close(self):
+        if self._is_connected and self.sock:
+            try:
+                self.sock.close()
+            except Exception:
+                pass
+            finally:
+                self._is_connected = False

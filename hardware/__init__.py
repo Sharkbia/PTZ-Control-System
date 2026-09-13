@@ -2,6 +2,7 @@ from .interfaces import (
     HardwareInterface,
     SerialHandler,
     TCPHandler,
+    UDPHandler,
 )
 
 __all__ = [
